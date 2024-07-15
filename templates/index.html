@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multimodal Assistant</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #chatBox {
+            height: 300px;
+            border: 1px solid #ccc;
+            overflow-y: scroll;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        #inputText {
+            width: 70%;
+            padding: 5px;
+        }
+        button {
+            padding: 5px 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Multimodal Assistant</h1>
+    <div id="chatBox"></div>
+    <input type="text" id="inputText" placeholder="Type your message here...">
+    <button onclick="sendText()">Send Text</button>
+    <button id="startRecord">Start Recording</button>
+    <button id="stopRecord" disabled>Stop Recording</button>
+
+    <script>
+        const chatBox = document.getElementById('chatBox');
+        const inputText = document.getElementById('inputText');
+        const startRecord = document.getElementById('startRecord');
+        const stopRecord = document.getElementById('stopRecord');
+
+        let mediaRecorder;
+        let audioChunks = [];
+
+        function sendText() {
+            const text = inputText.value;
+            if (text) {
+                addToChatBox('You: ' + text);
+                fetch('/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ question: text }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    addToChatBox('Assistant: ' + data.response);
+                })
+                .catch(error => console.error('Error:', error));
+                inputText.value = '';
+            }
+        }
+
+        function addToChatBox(message) {
+            chatBox.innerHTML += '<p>' + message + '</p>';
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        startRecord.onclick = () => {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+                    mediaRecorder.start();
+
+                    audioChunks = [];
+                    mediaRecorder.addEventListener("dataavailable", event => {
+                        audioChunks.push(event.data);
+                    });
+
+                    startRecord.disabled = true;
+                    stopRecord.disabled = false;
+                });
+        };
+
+        stopRecord.onclick = () => {
+            mediaRecorder.stop();
+            startRecord.disabled = false;
+            stopRecord.disabled = true;
+
+            mediaRecorder.addEventListener("stop", () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                
+                // Convert webm to wav
+                convertToWav(audioBlob).then(wavBlob => {
+                    const formData = new FormData();
+                    formData.append("audio", wavBlob, "recording.wav");
+
+                    fetch('/queryaudio', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        addToChatBox('You (audio): ' + data.query);
+                        addToChatBox('Assistant: ' + data.response);
+                        const audio = new Audio("data:audio/mp3;base64," + data.audio_response);
+                        audio.play();
+                    })
+                    .catch(error => console.error('Error:', error));
+                });
+            });
+        };
+
+        function convertToWav(blob) {
+            return new Promise(resolve => {
+                let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                let fileReader = new FileReader();
+
+                fileReader.onload = function(event) {
+                    let arrayBuffer = event.target.result;
+                    audioContext.decodeAudioData(arrayBuffer, function(buffer) {
+                        let wavBuffer = bufferToWav(buffer);
+                        resolve(new Blob([wavBuffer], {type: "audio/wav"}));
+                    });
+                };
+
+                fileReader.readAsArrayBuffer(blob);
+            });
+        }
+
+        function bufferToWav(abuffer) {
+            let numOfChan = abuffer.numberOfChannels,
+                length = abuffer.length * numOfChan * 2 + 44,
+                buffer = new ArrayBuffer(length),
+                view = new DataView(buffer),
+                channels = [], i, sample,
+                offset = 0,
+                pos = 0;
+
+            // write WAVE header
+            setUint32(0x46464952);                         // "RIFF"
+            setUint32(length - 8);                         // file length - 8
+            setUint32(0x45564157);                         // "WAVE"
+
+            setUint32(0x20746d66);                         // "fmt " chunk
+            setUint32(16);                                 // length = 16
+            setUint16(1);                                  // PCM (uncompressed)
+            setUint16(numOfChan);
+            setUint32(abuffer.sampleRate);
+            setUint32(abuffer.sampleRate * 2 * numOfChan); // avg. bytes/sec
+            setUint16(numOfChan * 2);                      // block-align
+            setUint16(16);                                 // 16-bit (hardcoded in this demo)
+
+            setUint32(0x61746164);                         // "data" - chunk
+            setUint32(length - pos - 4);                   // chunk length
+
+            // write interleaved data
+            for(i = 0; i < abuffer.numberOfChannels; i++)
+                channels.push(abuffer.getChannelData(i));
+
+            while(pos < length) {
+                for(i = 0; i < numOfChan; i++) {             // interleave channels
+                    sample = Math.max(-1, Math.min(1, channels[i][offset])); // clamp
+                    sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767)|0; // scale to 16-bit signed int
+                    view.setInt16(pos, sample, true);          // write 16-bit sample
+                    pos += 2;
+                }
+                offset++; // next source sample
+            }
+
+            return buffer;
+
+            function setUint16(data) {
+                view.setUint16(pos, data, true);
+                pos += 2;
+            }
+
+            function setUint32(data) {
+                view.setUint32(pos, data, true);
+                pos += 4;
+            }
+        }
+    </script>
+</body>
+</html>
