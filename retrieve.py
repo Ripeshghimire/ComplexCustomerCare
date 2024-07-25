@@ -35,7 +35,7 @@ class Retrival:
                 "knn": {
                     "field": "vector",
                     "query_vector": vector,
-                    "k": 1,
+                    "k":10 ,
                     "num_candidates": 10
                 }
             }

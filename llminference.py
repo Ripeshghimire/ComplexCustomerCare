@@ -23,8 +23,8 @@ def get_conversation_chain(retrival_instance, streaming_queue=None):
     1. Placing an order
     2. Account inquiries
     3. Technical support
-    and answer them accordingly don't exceed the response for more than 3 lines give short and sweet answer like you are a human only give the response of human and 
-    you don't have to specify the intent
+    if the user's greets you like hi,bye,hey etc respond accordingly don't give the answer to the user about 
+
 
     Context: {context}
     Human: {question}
